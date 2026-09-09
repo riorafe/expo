@@ -1,0 +1,46 @@
+appId: dev.expo.Payments
+---
+# Open Playground first. RN content has a maxWidth, but no fixed height; native measures it.
+- tapOn: 'Reset rows'
+- tapOn: 'Row 0 · taps 0'
+- tapOn:
+    id: 'expand-row-0'
+- assertVisible: 'Collapse RN content 0'
+- assertVisible:
+    id: 'details-row-0'
+# The embedded Pressable must not trigger the separate SwiftUI button.
+- assertVisible: 'Row 0 · taps 1'
+- tapOn:
+    id: 'expand-row-0'
+- assertVisible: 'Expand RN content 0'
+- assertNotVisible:
+    id: 'details-row-0'
+- assertVisible: 'Row 0 · taps 1'
+- tapOn:
+    id: 'expand-row-0'
+- repeat:
+    times: 8
+    commands:
+      - swipe:
+          start: '50%, 80%'
+          end: '50%, 30%'
+          duration: 300
+- assertNotVisible: 'Collapse RN content 0'
+- scrollUntilVisible:
+    element:
+      text: 'Row 0 · taps 0'
+    direction: UP
+    timeout: 60000
+# The local tap counter resets, but expansion in the item data survives eviction.
+# No corrective swipe: keep the same expanded content when replacing its cached placeholder.
+- assertVisible: 'Collapse RN content 0'
+- assertVisible:
+    id: 'details-row-0'
+- tapOn:
+    id: 'expand-row-0'
+- assertVisible: 'Expand RN content 0'
+- assertNotVisible:
+    id: 'details-row-0'
+- assertVisible: 'Row 0 · taps 0'
+- assertNotVisible:
+    id: 'list-missing-.*'

@@ -1,0 +1,19 @@
+appId: dev.expo.Payments
+---
+# Launch the Debug app with --swiftui-list-anchor-probe before running this diagnostic.
+- runFlow:
+    file: swiftui-native-anchor-sample.yaml
+    env:
+      MODE: "Plain List"
+- runFlow:
+    file: swiftui-native-anchor-sample.yaml
+    env:
+      MODE: "List ID"
+- runFlow:
+    file: swiftui-native-anchor-sample.yaml
+    env:
+      MODE: "List Reader"
+- runFlow:
+    file: swiftui-native-anchor-sample.yaml
+    env:
+      MODE: "Stack ID"

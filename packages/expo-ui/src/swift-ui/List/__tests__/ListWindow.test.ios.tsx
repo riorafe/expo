@@ -1,6 +1,6 @@
 import { act, fireEvent, render } from '@testing-library/react-native';
 import { useState } from 'react';
-import { Pressable, Text } from 'react-native';
+import { Pressable, Text, View } from 'react-native';
 
 import { List } from '..';
 
@@ -18,6 +18,53 @@ function Row({ id }: { id: string }) {
 }
 const renderItem = ({ item }: { item: { id: string } }) => <Row id={item.id} />;
 const props = { data, keyExtractor, renderItem, testID: 'list', initialNumToRender: 0 };
+
+it('preserves item-owned expansion across eviction while resetting row-local state', () => {
+  function Example() {
+    const [items, setItems] = useState(() => data.map((item) => ({ ...item, expanded: false })));
+    return (
+      <List
+        {...props}
+        data={items}
+        overscanCount={0}
+        renderItem={({ item, index }) => (
+          <View>
+            <Row id={item.id} />
+            <Pressable
+              testID={`expand-${item.id}`}
+              onPress={() =>
+                setItems((current) => {
+                  const next = current.slice();
+                  next[index] = { ...current[index]!, expanded: !current[index]!.expanded };
+                  return next;
+                })
+              }>
+              <Text>{item.expanded ? 'Expanded details' : 'Collapsed details'}</Text>
+            </Pressable>
+          </View>
+        )}
+      />
+    );
+  }
+  const screen = render(<Example />);
+  let revision = 0;
+  const window = (keys: string[]) => {
+    const list = screen.getByTestId('list');
+    fireEvent(list, 'renderWindowChange', {
+      nativeEvent: { keys, revision: ++revision, dataVersion: list.props.dataVersion },
+    });
+  };
+  window(['10']);
+  fireEvent.press(screen.getByTestId('row-10'));
+  fireEvent.press(screen.getByTestId('expand-10'));
+  expect(screen.getByText('10: 1')).toBeTruthy();
+  expect(screen.getByText('Expanded details')).toBeTruthy();
+  window(['50']);
+  expect(screen.queryByTestId('row-10')).toBeNull();
+  window(['10']);
+  expect(screen.getByText('10: 0')).toBeTruthy();
+  expect(screen.getByText('Expanded details')).toBeTruthy();
+});
 
 it('retains nearby rows but unmounts distant content and resets evicted local state', () => {
   const screen = render(<List {...props} overscanCount={2} />);

@@ -1,0 +1,59 @@
+appId: dev.expo.Payments
+---
+# Diagnostic, not a passing regression test. Launch native probe first, then pass MODE.
+# Results live in Maestro's command JSON; screenshots also capture the visible row.
+- assertVisible: "Native anchoring probe"
+- tapOn: "${MODE}"
+- tapOn: "Reset"
+- tapOn: "Go to 10"
+- swipe:
+    start: 50%, 65%
+    end: 50%, 60%
+    duration: 700
+- waitForAnimationToEnd
+- assertVisible: "Native row 10"
+- copyTextFrom:
+    id: "probe-measurement"
+- evalScript: ${console.log(MODE + ' prepend before ' + maestro.copiedText)}
+- tapOn: "Prepend 5"
+- assertVisible: "Prepend · 205 rows · bound=.*"
+- waitForAnimationToEnd
+- copyTextFrom:
+    id: "probe-measurement"
+- evalScript: ${console.log(MODE + ' prepend after ' + maestro.copiedText)}
+- evalScript: ${output.rowVisible = false}
+- runFlow:
+    when:
+      visible: "Native row 10"
+    commands:
+      - evalScript: ${output.rowVisible = true}
+- evalScript: ${console.log(MODE + ' prepend row10 visible=' + output.rowVisible)}
+- copyTextFrom:
+    id: "probe-status"
+- evalScript: ${console.log(MODE + ' prepend status ' + maestro.copiedText)}
+- takeScreenshot: /tmp/swiftui-native-${MODE}-prepend
+- tapOn: "Reset"
+- tapOn: "Go to 10"
+- swipe:
+    start: 50%, 65%
+    end: 50%, 60%
+    duration: 700
+- waitForAnimationToEnd
+- assertVisible: "Native row 10"
+- copyTextFrom:
+    id: "probe-measurement"
+- evalScript: ${console.log(MODE + ' append before ' + maestro.copiedText)}
+- tapOn: "Append 5"
+- assertVisible: "Append · 205 rows · bound=.*"
+- waitForAnimationToEnd
+- copyTextFrom:
+    id: "probe-measurement"
+- evalScript: ${console.log(MODE + ' append after ' + maestro.copiedText)}
+- evalScript: ${output.rowVisible = false}
+- runFlow:
+    when:
+      visible: "Native row 10"
+    commands:
+      - evalScript: ${output.rowVisible = true}
+- evalScript: ${console.log(MODE + ' append row10 visible=' + output.rowVisible)}
+- takeScreenshot: /tmp/swiftui-native-${MODE}-append

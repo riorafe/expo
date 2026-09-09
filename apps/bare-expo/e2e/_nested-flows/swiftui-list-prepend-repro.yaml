@@ -1,0 +1,34 @@
+appId: dev.expo.Payments
+---
+# Known failure, run explicitly after opening Playground; excluded from automatic flow discovery.
+# The opt-in probe measures row 10's global y in points. Visibility is also required because
+# SwiftUI can stop reporting geometry for an offscreen row even while React keeps it mounted.
+- tapOn: 'Reset rows'
+- tapOn: 'Track row 10'
+- scrollUntilVisible:
+    element:
+      text: 'Row 10 · taps 0'
+    direction: DOWN
+    centerElement: true
+    timeout: 60000
+- tapOn: 'Row 10 · taps 0'
+- assertVisible: 'Row 10 · taps 1'
+- waitForAnimationToEnd
+- copyTextFrom:
+    id: 'anchor-position'
+- evalScript: ${output.before = Number(maestro.copiedText.slice(3))}
+- assertTrue: ${isFinite(output.before) && output.before > 0}
+- takeScreenshot: /tmp/swiftui-list-prepend-before
+- tapOn: 'Prepend 5'
+- assertVisible: '205 rows · stress idle · step 0'
+- waitForAnimationToEnd
+# No scrolling or corrective gestures between these measurements.
+- copyTextFrom:
+    id: 'anchor-position'
+- evalScript: ${output.after = Number(maestro.copiedText.slice(3))}
+- takeScreenshot: /tmp/swiftui-list-prepend-after
+- assertVisible: 'Row 10 · taps 1'
+- assertTrue: ${isFinite(output.after) && Math.abs(output.after - output.before) <= 1}
+- assertNotVisible:
+    id: 'list-missing-.*'
+- tapOn: 'Stop tracking'
