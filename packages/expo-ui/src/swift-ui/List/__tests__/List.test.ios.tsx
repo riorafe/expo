@@ -14,9 +14,9 @@ beforeEach(() => {
   revision = 0;
   activeKeys = new Set();
 });
-function demand(key: string) {
+function demand(key: string, dataVersion = 0) {
   activeKeys.add(key);
-  return { nativeEvent: { key, keys: [...activeKeys], revision: ++revision } };
+  return { nativeEvent: { key, keys: [...activeKeys], revision: ++revision, dataVersion } };
 }
 
 const data = [{ id: 'a' }, { id: 'b' }, { id: 'c' }];
@@ -130,7 +130,7 @@ it('preserves surviving row state through inserts, reorders, and deletes without
   expect(screen.getByText('b: 1 at 0')).toBeTruthy();
   screen.rerender(example(data));
   expect(screen.queryByTestId('row-a')).toBeNull();
-  fireEvent(screen.getByTestId('list'), 'requestItem', demand('a'));
+  fireEvent(screen.getByTestId('list'), 'requestItem', demand('a', 4));
   expect(screen.getByText('a: 0 at 0')).toBeTruthy();
   expect(screen.getByText('b: 1 at 1')).toBeTruthy();
 });

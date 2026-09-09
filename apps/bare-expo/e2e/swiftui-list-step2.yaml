@@ -1,7 +1,7 @@
 appId: dev.expo.Payments
 ---
 # Open the Playground tab before running this focused smoke test.
-- assertVisible: 'Step 3: buffered window + measured heights'
+- assertVisible: 'List hardening: changing data'
 - tapOn: 'Reset rows'
 - assertVisible: 'Row 0 · taps 0'
 - tapOn: 'Row 0 · taps 0'

@@ -114,6 +114,24 @@ Native also requests missing content if an appeared row loses its React child af
 a delayed commit. Revisions protect JS ordering; this recovery handles the separate
 native commit/lifecycle timing boundary. Neither eliminates all possible blank frames.
 
+Events also carry the existing `dataVersion` prop. Revision answers "is this event
+newer?"; dataVersion answers "does it describe the dataset React is using now?" Both
+checks run inside the state updater, including transition rebases. An old dataset's
+event must not evict surviving rows or resurrect a removed-and-reinserted key. Ignoring
+it does not advance the accepted revision. When native receives the new data version,
+`updateKeys` prunes removed keys and schedules a fresh window snapshot.
+
+For example, window revision 10 schedules an asynchronous eviction of row A. Before
+that transition finishes, urgent revision 11 requests A again. Without the revision
+guard, applying the older eviction afterward would remove A's newly needed content.
+
+Separately, suppose React has accepted revision 40 for data version 7. Native emits
+revision 41 for version 7, but React replaces the dataset with version 8 before the
+event is applied. Revision 41 is newer, so the ordering guard alone would accept it.
+The dataVersion guard rejects it because its visibility snapshot describes old data,
+even if some of its keys also exist in version 8. Native's subsequent version-8
+snapshot is accepted normally. These are scalar checks, not dataset hashes/scans.
+
 ### Height retention
 
 The actual content reports its measured height through `onGeometryChange`. Native
@@ -158,6 +176,15 @@ away, and return: the local tap counter should reset after eviction. The focused
 Maestro flow is `apps/bare-expo/e2e/swiftui-list-step2.yaml` (updated for step 3).
 Settled screenshots and functional tests are not frame-time or no-blank benchmarks.
 
+The hardening demo also supports prepend, swapping the first two rows, deleting and
+reinserting key `0`, and clearing/refilling without changing the List's React key.
+Only "Reset rows" remounts the list intentionally. "Start mutation stress" runs
+15 updates 900 ms apart (prepend, delete, reverse, clear, refill, repeated three times)
+independently of gestures. Its timer is cleaned up on stop/unmount. The companion
+`apps/bare-expo/e2e/swiftui-list-mutations.yaml` checks surviving local state, reset
+state after removal, and recovery after the mutation/fling sequence. It does not
+assert exact scroll anchoring or inspect every presented frame.
+
 Verified after this step: 15 JS tests, package typecheck/build/lint, and the Debug
 iOS simulator build pass. The updated Maestro flow passes (tap, eight flings,
 return to an evicted row with reset local state, tap again, reset). With the demo's
@@ -168,3 +195,51 @@ publishing/reentrancy warnings were found in the captured native log.
 
 The broader bare-expo typecheck has existing errors outside this example. A future
 React Native hydration proposal is separate; this implementation does not depend on it.
+
+## Production-hardening checklist
+
+The first hardening pass brings the JS suite to 18 passing tests. Package build,
+focused JS lint/format checks, Swift syntax parsing, and the native Debug simulator
+build pass on the clean main-based branch. The mutation Maestro flow passes on
+iPhone 17 Pro Max / iOS 26.5: surviving state through swap/prepend, state reset after
+delete/reinsert, clear/refill, and recovery after 15 timed mutations with swipes.
+Its final settled viewport has no missing-content accessibility nodes and remains
+interactive. This does not establish exact gesture/mutation timing or zero blank frames.
+The original eviction Maestro flow also passes on this rebuild: tap, eight upward
+swipes, return to the evicted row with reset local state, tap again, and reset the list.
+
+On latest main, the package typecheck is blocked by missing `@testing-library/react`
+in three unrelated web tests in the local install. The broader bare-expo typecheck
+also has unrelated errors; neither reports errors in the changed List/demo files.
+Swiftlint succeeds with existing configuration/selection-code warnings. Physical-device
+Release profiling, scroll anchoring, and broader lifecycle validation remain pending.
+
+Keep the architecture and public prop surface steady while validating these gates:
+
+- [x] Reproduce and reject delayed old-dataset urgent/window events, including key
+  reuse and concurrent updates. Covered by JS regression tests; this is not a native
+  lifecycle or presentation guarantee.
+- [ ] Physical-device Release profiling: sustained and reversing flings, realistic
+  rows, intentional JS stalls, and a long scroll session. Record device/OS/RN version,
+  frame-time distribution and hitches, missing-content frames, peak/steady memory,
+  and urgent event frequency. Measure the actual scheduler/commit work, not just the
+  Swift event-enqueue method, which returns before that work completes. Compare with
+  an equivalent eager SwiftUI List using the same content. Disable per-row console
+  logging during measurements. Simulator Debug results do not satisfy this gate.
+- [ ] Native lifecycle/data stress: prepend, reorder, delete/reinsert, clear/refill,
+  navigate away/back, background/foreground, and unmount with pending events. Assert
+  surviving state and eventual content recovery, no crashes/warnings, and expected
+  scroll-position behavior. JS mocked-native tests cannot establish these properties.
+- [ ] Dynamic layout: delayed image sizes, expanded content, offscreen data changes,
+  rotation, Dynamic Type, and RNHostView intrinsic measurement. Check anchoring as well
+  as final heights; cached width/height alone is not complete invalidation.
+- [ ] Interaction/accessibility: embedded Pressable, Gesture Handler/Reanimated,
+  VoiceOver traversal, and TextInput keyboard/focus during scrolling and eviction.
+  Decide focused-row retention behavior before claiming input-heavy lists are supported.
+- [ ] Compatibility: supported iOS/tvOS and RN versions, reload/teardown of the
+  experimental event bridge, and existing children-based selection/sections/editing.
+
+Ship the data API as experimental until these results establish a supported scope.
+Pagination, refresh, and scroll methods are separate API work, not substitutes for
+these checks. Do not claim zero blanks or native-equivalent performance from the
+current functional smoke tests.

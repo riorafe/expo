@@ -79,9 +79,11 @@ type NativeListProps = Omit<ListProps, 'onSelectionChange'> &
     estimatedRowHeight?: number;
     dataVersion?: number;
     onRequestItem?: (event: {
-      nativeEvent: { key: string; keys: string[]; revision: number };
+      nativeEvent: { key: string; keys: string[]; revision: number; dataVersion: number };
     }) => void;
-    onRenderWindowChange?: (event: { nativeEvent: { keys: string[]; revision: number } }) => void;
+    onRenderWindowChange?: (event: {
+      nativeEvent: { keys: string[]; revision: number; dataVersion: number };
+    }) => void;
   };
 
 /**
@@ -170,11 +172,16 @@ function DataList<T>({
       rowKeys={rows.keys}
       estimatedRowHeight={estimatedRowHeight}
       dataVersion={mounted.dataVersion}
-      onRequestItem={({ nativeEvent: { key, keys, revision } }) => {
+      onRequestItem={({ nativeEvent: { key, keys, revision, dataVersion } }) => {
         // Urgent update: deliberately not wrapped in startTransition.
         setMounted((current) => {
-          // Read the current dataset, not one captured by an older event callback.
-          if (revision <= current.revision || !current.rows.byKey.has(key)) return current;
+          // Read current state at application time. A newer event can still describe old data.
+          if (
+            dataVersion !== current.dataVersion ||
+            revision <= current.revision ||
+            !current.rows.byKey.has(key)
+          )
+            return current;
           const activeKeys = new Set(keys.filter((key) => current.rows.byKey.has(key)));
           activeKeys.add(key);
           const allowed = renderWindowKeys(
@@ -196,11 +203,11 @@ function DataList<T>({
           };
         });
       }}
-      onRenderWindowChange={({ nativeEvent: { keys, revision } }) => {
+      onRenderWindowChange={({ nativeEvent: { keys, revision, dataVersion } }) => {
         startTransition(() => {
           setMounted((current) => {
             // This guard runs when React applies/rebases the update, not just on event receipt.
-            if (revision <= current.revision) return current;
+            if (dataVersion !== current.dataVersion || revision <= current.revision) return current;
             const activeKeys = new Set(keys.filter((key) => current.rows.byKey.has(key)));
             return {
               ...current,

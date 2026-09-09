@@ -23,7 +23,7 @@ it('retains nearby rows but unmounts distant content and resets evicted local st
   const screen = render(<List {...props} overscanCount={2} />);
   const window = (keys: string[], revision: number) =>
     fireEvent(screen.getByTestId('list'), 'renderWindowChange', {
-      nativeEvent: { keys, revision },
+      nativeEvent: { keys, revision, dataVersion: 0 },
     });
   window(['10', '11'], 1);
   expect(screen.getAllByTestId(/^row-/)).toHaveLength(6); // 8 through 13
@@ -44,12 +44,12 @@ it('renders and pins the initial batch while evicting other rows', () => {
   expect(screen.getAllByTestId(/^row-/)).toHaveLength(2);
   fireEvent.press(screen.getByTestId('row-0'));
   fireEvent(screen.getByTestId('list'), 'renderWindowChange', {
-    nativeEvent: { keys: ['50'], revision: 1 },
+    nativeEvent: { keys: ['50'], revision: 1, dataVersion: 0 },
   });
   expect(screen.getAllByTestId(/^row-/)).toHaveLength(3);
   expect(screen.getByText('0: 1')).toBeTruthy();
   fireEvent(screen.getByTestId('list'), 'renderWindowChange', {
-    nativeEvent: { keys: [], revision: 2 },
+    nativeEvent: { keys: [], revision: 2, dataVersion: 0 },
   });
   expect(screen.queryByTestId('row-50')).toBeNull();
   expect(screen.getByText('0: 1')).toBeTruthy();
@@ -58,15 +58,23 @@ it('renders and pins the initial batch while evicting other rows', () => {
 it('does not let an older transition evict a newer urgent request, even for an already mounted row', () => {
   const screen = render(<List {...props} overscanCount={0} />, { concurrentRoot: true });
   const list = screen.getByTestId('list');
-  fireEvent(list, 'requestItem', { nativeEvent: { key: '10', keys: ['10'], revision: 1 } });
+  fireEvent(list, 'requestItem', {
+    nativeEvent: { key: '10', keys: ['10'], revision: 1, dataVersion: 0 },
+  });
   act(() => {
-    fireEvent(list, 'renderWindowChange', { nativeEvent: { keys: ['20'], revision: 2 } });
-    fireEvent(list, 'requestItem', { nativeEvent: { key: '10', keys: ['10'], revision: 3 } });
+    fireEvent(list, 'renderWindowChange', {
+      nativeEvent: { keys: ['20'], revision: 2, dataVersion: 0 },
+    });
+    fireEvent(list, 'requestItem', {
+      nativeEvent: { key: '10', keys: ['10'], revision: 3, dataVersion: 0 },
+    });
   });
   expect(screen.getByTestId('row-10')).toBeTruthy();
-  fireEvent(list, 'renderWindowChange', { nativeEvent: { keys: [], revision: 2 } });
+  fireEvent(list, 'renderWindowChange', { nativeEvent: { keys: [], revision: 2, dataVersion: 0 } });
   expect(screen.getByTestId('row-10')).toBeTruthy();
-  fireEvent(list, 'renderWindowChange', { nativeEvent: { keys: ['20'], revision: 4 } });
+  fireEvent(list, 'renderWindowChange', {
+    nativeEvent: { keys: ['20'], revision: 4, dataVersion: 0 },
+  });
   expect(screen.queryByTestId('row-10')).toBeNull();
   expect(screen.getByTestId('row-20')).toBeTruthy();
 });
@@ -85,7 +93,7 @@ it('bounds disjoint windows without scanning the dataset or filling the gap', ()
   const screen = render(<List {...props} data={items} overscanCount={2} />);
   reads = 0;
   fireEvent(screen.getByTestId('list'), 'renderWindowChange', {
-    nativeEvent: { keys: ['0', '9999'], revision: 1 },
+    nativeEvent: { keys: ['0', '9999'], revision: 1, dataVersion: 0 },
   });
   expect(reads).toBe(0);
   expect(screen.getAllByTestId(/^row-/)).toHaveLength(6);
@@ -95,7 +103,7 @@ it('bounds disjoint windows without scanning the dataset or filling the gap', ()
 it('applies buffer changes to the current window without resetting surviving state', () => {
   const screen = render(<List {...props} overscanCount={2} />);
   fireEvent(screen.getByTestId('list'), 'renderWindowChange', {
-    nativeEvent: { keys: ['10'], revision: 1 },
+    nativeEvent: { keys: ['10'], revision: 1, dataVersion: 0 },
   });
   fireEvent.press(screen.getByTestId('row-10'));
   screen.rerender(<List {...props} overscanCount={0} />);
@@ -135,11 +143,76 @@ it('bounds mounted content even when no background window update commits during 
   for (let index = 0; index < 100; index++) {
     const key = String(index);
     fireEvent(screen.getByTestId('list'), 'requestItem', {
-      nativeEvent: { key, keys: [key], revision: index + 1 },
+      nativeEvent: { key, keys: [key], revision: index + 1, dataVersion: 0 },
     });
     // Already-mounted neighbors are retained; not-yet-mounted neighbors are not rendered urgently.
     expect(screen.getAllByTestId(/^row-/).length).toBeLessThanOrEqual(3);
   }
   expect(screen.queryByTestId('row-0')).toBeNull();
   expect(screen.getByTestId('row-99')).toBeTruthy();
+});
+
+it('ignores old-dataset snapshots without evicting surviving rows or consuming their revision', () => {
+  const screen = render(<List {...props} overscanCount={0} />);
+  const list = screen.getByTestId('list');
+  fireEvent(list, 'requestItem', {
+    nativeEvent: { key: '10', keys: ['10', '11'], revision: 1, dataVersion: 0 },
+  });
+  fireEvent.press(screen.getByTestId('row-11'));
+  screen.rerender(<List {...props} data={[...data].reverse()} overscanCount={0} />);
+  expect(list.props.dataVersion).toBe(1);
+
+  // Keys still exist, but this visibility snapshot belongs to the previous native dataset.
+  fireEvent(list, 'requestItem', {
+    nativeEvent: { key: '10', keys: ['10'], revision: 100, dataVersion: 0 },
+  });
+  expect(screen.getByText('11: 1')).toBeTruthy();
+  fireEvent(list, 'renderWindowChange', {
+    nativeEvent: { keys: [], revision: 101, dataVersion: 0 },
+  });
+  expect(screen.getByText('11: 1')).toBeTruthy();
+
+  fireEvent(list, 'renderWindowChange', {
+    nativeEvent: { keys: ['20'], revision: 2, dataVersion: 1 },
+  });
+  expect(screen.queryByTestId('row-11')).toBeNull();
+  expect(screen.getByTestId('row-20')).toBeTruthy();
+});
+
+it('does not resurrect a deleted and reinserted key from a delayed demand', () => {
+  const screen = render(<List {...props} overscanCount={0} />);
+  const list = screen.getByTestId('list');
+  const oldRequest = list.props.onRequestItem;
+  screen.rerender(<List {...props} data={[]} overscanCount={0} />);
+  screen.rerender(<List {...props} overscanCount={0} />);
+  act(() =>
+    oldRequest({
+      nativeEvent: { key: '10', keys: ['10'], revision: 1, dataVersion: 0 },
+    })
+  );
+  expect(screen.queryByTestId('row-10')).toBeNull();
+  fireEvent(list, 'requestItem', {
+    nativeEvent: { key: '10', keys: ['10'], revision: 2, dataVersion: 2 },
+  });
+  expect(screen.getByTestId('row-10')).toBeTruthy();
+});
+
+it('does not let an old-dataset transition override a current-dataset urgent request', () => {
+  const screen = render(<List {...props} overscanCount={0} />, { concurrentRoot: true });
+  const list = screen.getByTestId('list');
+  fireEvent(list, 'requestItem', {
+    nativeEvent: { key: '10', keys: ['10'], revision: 1, dataVersion: 0 },
+  });
+  fireEvent.press(screen.getByTestId('row-10'));
+  // Native can emit version 1 only after React commits the updated dataVersion prop.
+  screen.rerender(<List {...props} data={[...data].reverse()} overscanCount={0} />);
+  act(() => {
+    fireEvent(list, 'renderWindowChange', {
+      nativeEvent: { keys: [], revision: 2, dataVersion: 0 },
+    });
+    fireEvent(list, 'requestItem', {
+      nativeEvent: { key: '10', keys: ['10'], revision: 3, dataVersion: 1 },
+    });
+  });
+  expect(screen.getByText('10: 1')).toBeTruthy();
 });

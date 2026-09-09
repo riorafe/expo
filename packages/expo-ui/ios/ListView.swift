@@ -186,7 +186,7 @@ private final class ListRenderWindow: ObservableObject {
     guard appeared.contains(key) else { return }
     revision += 1
     props.onRequestItem.experimentalRequestSynchronous([
-      "key": key, "keys": Array(appeared), "revision": revision
+      "key": key, "keys": Array(appeared), "revision": revision, "dataVersion": props.dataVersion
     ])
     schedule(props)
   }
@@ -200,7 +200,9 @@ private final class ListRenderWindow: ObservableObject {
       self.scheduled = false
       guard let props else { return }
       self.revision += 1
-      props.onRenderWindowChange(["keys": Array(self.appeared), "revision": self.revision])
+      props.onRenderWindowChange([
+        "keys": Array(self.appeared), "revision": self.revision, "dataVersion": props.dataVersion
+      ])
     }
   }
 }
