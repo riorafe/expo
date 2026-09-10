@@ -12,9 +12,7 @@ native template, or hydration/adoption mechanism. The original children-based
 ```tsx
 // Keep callbacks stable; use useCallback when they depend on component values.
 const keyExtractor = (message: Message) => message.id;
-const renderItem = ({ item }: { item: Message }) => (
-  <MessageRow message={item} />
-);
+const renderItem = ({ item }: { item: Message }) => <MessageRow message={item} />;
 
 <List
   data={messages}
@@ -40,11 +38,53 @@ This is still experimental. Props for the data path:
 - `extraData`: an immutable invalidation marker forwarded to memoized row wrappers.
   It does not rebuild the key lookup. Your renderer must still read current values;
   this prop cannot repair a stale closure.
+- `onEndReached()`: asynchronously called when the last native row appears, once
+  per last-item key. Appending a page makes its new last row eligible. Reappearing
+  rows, updated callback identities, and immutable copies with the same tail do not
+  duplicate a completed notification. Committing empty data resets the notification.
 
 The initial-batch and external-data marker semantics take reference from
 [React Native VirtualizedList](https://reactnative.dev/docs/virtualizedlist).
 Selection, sections, and editing remain on the original children API for now.
-Pagination, imperative scrolling, and precise viewability callbacks are not implemented.
+Imperative scrolling and precise viewability callbacks are not implemented.
+
+### Append pagination
+
+```tsx
+<List
+  data={items}
+  keyExtractor={keyExtractor}
+  renderItem={renderItem}
+  onEndReached={hasMore ? loadNextPage : undefined}
+  onEndReachedItemThreshold={2}
+/>
+```
+
+The callback uses the already accepted native appeared-key snapshot. It does not
+scan the dataset or count React overscan as native appearance. Short lists may
+trigger on initial layout; empty lists do not. SwiftUI may report appearance while
+prefetching, so this is not a guarantee that the row has reached a particular pixel.
+`onEndReachedItemThreshold` defaults to 0 (last item). A value of 2 makes the
+callback eligible when an appearing row has at most two items after it. It must be
+a non-negative safe integer; values larger than the dataset make any appearing
+row eligible. Only appeared keys are checked against the existing index lookup.
+Changing the threshold does not reset notification for an already notified tail.
+There is deliberately no FlatList-style pixel-distance/viewport threshold or
+`distanceFromEnd` payload.
+
+React effects can flush during synchronous row demand, so the effect defers the
+callback to a normal JS timer task. Pending callbacks are canceled if no appearing
+row meets the threshold, the tail changes, the callback changes/is removed, or the List unmounts.
+The same last key will not notify again just because the user scrolls away and back.
+
+Applications own `loading`, `hasMore`, network errors, and an explicit retry action.
+Guard concurrent loads in `loadNextPage` (including loads triggered outside the List).
+A failed request or empty response does not automatically retry against the same tail.
+Load an empty list's first page explicitly rather than relying on `onEndReached`.
+
+Playground → **Pagination example** simulates two delayed page loads (5 → 10 → 15
+rows), guards in-flight work, disables the callback when exhausted, and keeps the
+same RNHostView/variable-height row content used by the hardening example.
 
 ## Step 1: the event bridge
 
@@ -218,149 +258,17 @@ every frame, offscreen data changes, prepend/delete, or asynchronous content siz
 No native height-cache or scroll-offset compensation change was justified by this
 reproduction. Those other cases still need their own measurements and regressions.
 
-### Known failure: prepending while scrolled down
+### Deferred: chat-style scroll anchoring
 
-The focused prepend reproduction **fails** on iPhone 17 Pro Max / iOS 26.5 in Debug.
-It scrolls to row 10, increments its local tap counter, captures its global y, and
-prepends five items with varying text lengths and alternating expanded RN content.
-There are no corrective gestures between the before/after checks. The expected
-result is the same tapped row still visible within 1 point of its original y.
+Focus for now: ordinary feeds, append pagination, variable-height rows, and bounded
+React mounting. Precise prepend position preservation, inverted/chat layouts,
+pixel-distance thresholds, and imperative scrolling are deferred.
 
-Observed: row 10 starts at approximately y = 298.83 points. After insertion, row 5
-occupies that screen position and row 10 is outside the viewport. Repeating with
-`initialNumToRender={items.length}` (all React rows pinned) produces the same jump,
-with row 10 initially at approximately y = 298.50 points. Eviction is therefore not
-required to reproduce it. This comparison still uses Expo's data List path, not a
-standalone pure-SwiftUI control; it does not isolate every possible native cause.
-In the eager comparison, scrolling back to row 10 finds its counter still at 1:
-the row moved out of view without losing its React state.
-
-The Playground's "Track row 10" enables a geometry probe on that row only. It is
-off by default, and "Reset rows" disables it. Its displayed y is the **last reported**
-coordinate, not proof of current visibility: SwiftUI can stop reporting geometry
-once the row goes offscreen even though React retains it. The reproduction checks
-visibility/state as well as the coordinate, so a stale y cannot falsely pass it.
-The diagnostic header has a fixed height and does not move the List when enabled.
-
-Run `apps/bare-expo/e2e/_nested-flows/swiftui-list-prepend-repro.yaml` explicitly
-with Maestro after opening Playground. It intentionally asserts the desired
-behavior and currently fails; `_nested-flows` keeps this investigation out of the
-automatically discovered passing suite. Before/after screenshots go to
-`/tmp/swiftui-list-prepend-before.png` and `/tmp/swiftui-list-prepend-after.png`.
-For the eager comparison, temporarily set `initialNumToRender={items.length}` and
-reload; normal demo settings remain zero pinned rows and five-row overscan.
-
-Do not promise prepend/chat-history position preservation yet. A follow-up needs
-to preserve a surviving visible **key and its offset**, rather than an index or
-an estimated sum of inserted heights. It must also handle subsequent measurements
-and insertions during a fling. No native offset compensation has been added in this
-step, and the passing 19 JS tests cannot establish this native layout behavior.
-
-### Pure SwiftUI anchoring control (September 9, 2026)
-
-`apps/bare-expo/ios/ListAnchorProbe.swift` isolates the container behavior from Expo:
-200 native SwiftUI rows, stable integer IDs, variable-height text, and native
-`@State` insertions. There are no React rows, placeholders, demand events, or UIKit
-scroll-view inspection. `SceneDelegate` opens it only in Debug, on iOS 17+, when
-launched with `--swiftui-list-anchor-probe`. Normal launches are unchanged.
-
-The completed diagnostic on iPhone 17 Pro Max / iOS 26.5 (Debug, Xcode 27 beta)
-uses "Go to 10", then a short real drag, waits for scrolling to settle, and inserts
-five rows. It resets and repeats independently for append. Row 10 starts at
-y = 486 points. Screenshots and accessibility visibility are checked in addition
-to its last geometry value.
-
-| Native strategy                                                 | Prepend                                         | Append                   |
-| --------------------------------------------------------------- | ----------------------------------------------- | ------------------------ |
-| Plain `List`                                                    | Row 10 leaves the viewport                      | Row 10 stays at y = 486  |
-| `List` + `scrollTargetLayout` + `scrollPosition(id:)`           | Row 10 leaves the viewport; binding stays `nil` | Row 10 stays at y = 486  |
-| `List` + explicit `ScrollViewReader.scrollTo(10, anchor: .top)` | Row 10 returns at y = 246.33                    | Also moves to y = 246.33 |
-| `ScrollView` + `LazyVStack` + `scrollPosition(id:)`             | Row 10 stays at y = 486; binding tracks row 9   | Row 10 stays at y = 486  |
-
-The Reader case deliberately restores the known test row after **every** insertion.
-Its append movement is caused by that policy, not by append itself. It demonstrates
-ID navigation, not a production implementation of offset preservation. It does not
-automatically choose the first visible row or test custom fractional anchors.
-
-An earlier run used only the programmatic jump, without the real drag. The stack's
-binding stayed `nil` and prepend did not preserve row 10. Do not generalize the
-successful gesture-driven result to initial positioning or all update paths.
-
-Geometry callbacks can stop when a row goes offscreen: plain List reported the
-same cached y even though row 10 was gone. The probe therefore labels it `lastY`,
-not "visible position". A zero delta alone is **not** evidence of preservation.
-
-To reproduce, build/install Debug on the dedicated simulator, then run from the
-repository root:
-
-```sh
-xcrun simctl launch --terminate-running-process 7FFA7979-55F7-4C05-8690-FE27277B63CC dev.expo.Payments --swiftui-list-anchor-probe
-maestro --device 7FFA7979-55F7-4C05-8690-FE27277B63CC test apps/bare-expo/e2e/_nested-flows/swiftui-native-anchor-matrix.yaml
-```
-
-Alternatively, enable the same launch argument in Xcode's Debug scheme. Disable
-it to return to the React app. The nested Maestro flow **collects results**, rather
-than asserting that all four strategies preserve position. See its console messages
-in Maestro's command JSON and `/tmp/swiftui-native-<mode>-<operation>.png` screenshots.
-
-Conclusion: the prepend failure is reproducible without the React integration.
-The successful stack is a control, not a replacement for Expo UI's `List`. These
-checks cover settled scrolling on one OS/device, not active flings, asynchronously
-resizing rows, keyboard changes, or frame-by-frame flicker. No public anchoring prop
-has been added. The unfinished UIKit compensation spike was removed; production
-`ListView.swift` is unchanged from the committed implementation.
-
-### Fractional-anchor experiment (September 10, 2026)
-
-The Debug-only native probe now has a **Fraction** mode. It captures row 10 and
-the List viewport in the same global coordinate space before inserting data, then
-calls `ScrollViewReader.scrollTo` once from `onChange(of: items.count)` with a
-calculated `UnitPoint`. The measured row is fully visible and shorter than the
-viewport. Row insets and vertical scroll-content margins are zero in this mode
-to avoid ambiguity between the measured content and its scroll target.
-
-The calculation aligns the same fractional point in both rectangles:
-
-```swift
-let a = (rowTop - viewportTop) / (viewportHeight - rowHeight)
-proxy.scrollTo(10, anchor: UnitPoint(x: 0.5, y: a))
-```
-
-This follows from `viewportTop + a * viewportHeight = rowTop + a * rowHeight`.
-There are no UIKit scroll lookups, animation wrappers, retry loops, or delayed
-corrections. As in the earlier Reader control, restoration also runs after append
-to test the operation itself; that is not a proposed append policy.
-
-On the same iPhone 17 Pro Max / iOS 26.5 Debug simulator:
-
-| Operation / drag end | Before y | Requested anchor y | After y | Movement       |
-| -------------------- | -------- | ------------------ | ------- | -------------- |
-| Prepend / 60%        | 486.00   | 0.436073           | 523.33  | +37.33 points  |
-| Prepend / 50%        | 394.33   | 0.279110           | 523.33  | +129.00 points |
-| Append / 60%         | 486.00   | 0.436073           | 523.33  | +37.33 points  |
-
-All three flows reached the final position assertion and **failed** the one-point
-tolerance. Row 10 remained visible, and screenshots confirm its movement; these
-are not failures to launch, tap, or locate the row. Native geometry logs agree
-with the accessibility measurement text. The viewport's top was 231.33 and its
-height was 690.67; the row height was 106.67. The observed final y is the centered
-position: `231.33 + (690.67 - 106.67) / 2 = 523.33`.
-
-Inference: in this tested List configuration, these two fractional anchors behave
-like center alignment. This does not establish how every custom anchor behaves
-on every OS, but it rules out this implementation as our offset-preservation fix.
-The native build passed; production `ListView.swift` and the JS List implementation
-were not changed by this experiment.
-
-After launching the native probe as above, run the assertion explicitly:
-
-```sh
-maestro --device 7FFA7979-55F7-4C05-8690-FE27277B63CC test -e OPERATION=Prepend -e END_Y=60% apps/bare-expo/e2e/_nested-flows/swiftui-native-fractional-anchor.yaml
-```
-
-Use `END_Y=50%` for the second position or `OPERATION=Append` for the append
-control. Both drags start at 65% and last 700 ms. The flow is intentionally kept
-under `_nested-flows` because it asserts desired behavior that currently fails.
+Earlier experiments reproduced the prepend jump in pure SwiftUI List as well as
+the Expo integration. Neither ID restoration nor fractional anchors established
+pixel-accurate preservation. The temporary native probe, launch hook, and anchoring
+flows have been removed; detailed experiments remain recoverable from Git history.
+No UIKit scroll compensation or alternate container is used by the production List.
 
 ### Earlier checkpoint verification
 

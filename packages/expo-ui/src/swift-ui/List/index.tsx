@@ -1,5 +1,5 @@
 import { requireNativeView } from 'expo';
-import { memo, startTransition, useMemo, useState } from 'react';
+import { memo, startTransition, useEffect, useMemo, useRef, useState } from 'react';
 
 import { type ViewEvent } from '../../types';
 import { createViewModifierEventListener } from '../modifiers/utils';
@@ -64,6 +64,21 @@ export interface ListDataProps<T> extends CommonViewModifierProps {
   initialNumToRender?: number;
   /** Change this marker to re-render memoized rows that depend on data outside `data`. */
   extraData?: unknown;
+  /**
+   * Called asynchronously when SwiftUI reports a row within onEndReachedItemThreshold
+   * items of the end has appeared, once per last-item key. Appending data makes the new
+   * last row eligible. May fire on initial layout for short lists; never fires for empty
+   * data. SwiftUI may prefetch rows before they are visible. Guard loading/hasMore in your
+   * callback and handle retries yourself.
+   * Unlike FlatList, this is lifecycle-based, not a pixel-distance threshold.
+   */
+  onEndReached?: () => void;
+  /**
+   * Number of remaining items at which onEndReached becomes eligible. Defaults to 0
+   * (the last item); 5 starts when an appearing item has at most 5 items after it.
+   * Must be a non-negative safe integer. Counts items, not pixels or viewport lengths.
+   */
+  onEndReachedItemThreshold?: number;
   children?: never;
 }
 
@@ -79,7 +94,12 @@ type NativeListProps = Omit<ListProps, 'onSelectionChange'> &
     estimatedRowHeight?: number;
     dataVersion?: number;
     onRequestItem?: (event: {
-      nativeEvent: { key: string; keys: string[]; revision: number; dataVersion: number };
+      nativeEvent: {
+        key: string;
+        keys: string[];
+        revision: number;
+        dataVersion: number;
+      };
     }) => void;
     onRenderWindowChange?: (event: {
       nativeEvent: { keys: string[]; revision: number; dataVersion: number };
@@ -109,6 +129,8 @@ function DataList<T>({
   overscanCount = 10,
   initialNumToRender = 10,
   extraData,
+  onEndReached,
+  onEndReachedItemThreshold = 0,
   ...props
 }: ListDataProps<T>) {
   // One dataset pass when its inputs change, not when native requests another row.
@@ -149,6 +171,37 @@ function DataList<T>({
     revision: 0,
     dataVersion: 0,
   }));
+  const lastKey = rows.keys[rows.keys.length - 1];
+  if (!Number.isSafeInteger(onEndReachedItemThreshold) || onEndReachedItemThreshold < 0) {
+    throw new Error('List onEndReachedItemThreshold must be a non-negative safe integer.');
+  }
+  // Check only native appeared keys using the existing index lookup, never the dataset.
+  const firstEndIndex = Math.max(0, rows.keys.length - 1 - onEndReachedItemThreshold);
+  let endAppeared = false;
+  if (onEndReached) {
+    for (const key of mounted.activeKeys) {
+      const row = rows.byKey.get(key);
+      if (row && row.index >= firstEndIndex) {
+        endAppeared = true;
+        break;
+      }
+    }
+  }
+  const notifiedEnd = useRef<string | undefined>(undefined);
+  useEffect(() => {
+    if (lastKey === undefined) {
+      notifiedEnd.current = undefined;
+      return;
+    }
+    if (!onEndReached || !endAppeared || notifiedEnd.current === lastKey) return;
+    // Effects can be flushed during a synchronous demand event. Pagination must not run
+    // there, so yield to an ordinary JS task. Cancel if the row/data/callback goes away.
+    const timer = setTimeout(() => {
+      notifiedEnd.current = lastKey;
+      onEndReached();
+    }, 0);
+    return () => clearTimeout(timer);
+  }, [lastKey, endAppeared, onEndReached]);
   if (
     mounted.rows !== rows ||
     mounted.overscanCount !== overscanCount ||
